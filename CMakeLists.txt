@@ -8,13 +8,14 @@ project(
     LANGUAGES CXX
 )
 
-set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD 14)
 
 find_package(GTest REQUIRED)
 
 add_executable(
     ${PROJECT_NAME} main.cpp
     include/gtest-strace/gtest-strace.hpp
+    include/gtest-strace/impl/linux-ptrace.hpp
 )
 
 target_include_directories(
