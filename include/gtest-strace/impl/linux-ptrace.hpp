@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <exception>
 #include <csignal>
+#include <memory>
 
 
 namespace testing
