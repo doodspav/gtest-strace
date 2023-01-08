@@ -129,7 +129,7 @@ namespace linux_ptrace
 
 
     /// @brief   Checks that stack grows from high address to low address.
-    /// @returns true if stack grows down, false if it doesn't.
+    /// @returns True if stack grows down, false if it doesn't.
     [[nodiscard, gnu::const]] inline constexpr bool
     CheckStackGrowsDownwards() noexcept
     {
@@ -143,7 +143,8 @@ namespace linux_ptrace
     }
 
 
-    /// @brief  Create stack to be used by new process/thread.
+    /// @brief   Create stack to be used by new thread.
+    /// @returns Newly allocated memory region suitable for stack of new thread.
     [[nodiscard]] Expected<ThreadStack>
     CreateStack() noexcept
     {
@@ -195,6 +196,47 @@ namespace linux_ptrace
 
         // success
         return ThreadStack{std::move(uptr), stack_ptr, stack_size};
+    }
+
+
+    /// @brief   Run wrapped function in child process.
+    /// @details Child process shares all system resources with parent process.
+    /// @returns Child process's pid_t.
+    /// @warning Parameters passed to function must remain valid until child process terminates.
+    [[nodiscard]] Expected<pid_t>
+    RunWithClone(WrappedArgs *wargs, ThreadStack *ts) noexcept
+    {
+        // setup flags for clone
+        int flags =
+            // share virtual memory (to be able to pass args and save exception)
+            CLONE_VM      |
+            // share sysv semaphores
+            CLONE_SYSVSEM |
+            // share files and filesystem
+            CLONE_FILES   |
+            CLONE_FS      |
+            // share io
+            CLONE_IO      |
+            // so that we can use waitpid
+            SIGCHLD       |
+            // to obtain child pid
+            CLONE_PARENT_SETTID;
+
+        // clone
+        pid_t pid;
+        void *args = static_cast<void *>(wargs);
+        int res    = clone(WrapperFunctionForClone, ts->start, flags, args, &pid);
+
+        // check for failure
+        if (res == -1)
+        {
+            return Unexpected{ AssertionFailure()
+                << "Failed to run function with clone and flags " << flags
+                << " with errno: " << errno };
+        }
+
+        // success
+        return pid;
     }
 
 
