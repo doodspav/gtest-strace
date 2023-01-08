@@ -15,6 +15,10 @@ find_package(GTest REQUIRED)
 add_executable(
     ${PROJECT_NAME} main.cpp
     include/gtest-strace/gtest-strace.hpp
+    # impl/util
+    include/gtest-strace/impl/util/expected.hpp
+    include/gtest-strace/impl/util/expected-assertion.hpp
+    # impl
     include/gtest-strace/impl/linux-ptrace.hpp
 )
 

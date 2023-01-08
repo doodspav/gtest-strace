@@ -7,7 +7,7 @@
 #endif
 
 
-#include <gtest/gtest.h>
+#include "util/expected-assertion.hpp"
 
 #include <sched.h>
 #include <sys/mman.h>
@@ -33,8 +33,10 @@ namespace linux_ptrace
     /// @brief Struct used as deleter for memory allocated with mmap.
     struct MUnmapDeleter
     {
+        /// @brief Size of allocation passed to mmap.
         std::size_t size;
 
+        /// @brief Deallocate ptr obtained from mmap call using size member.
         void operator()(void *ptr) const noexcept
         {
             (void) munmap(ptr, size);
@@ -49,7 +51,7 @@ namespace linux_ptrace
         std::unique_ptr<char, MUnmapDeleter> memory;
 
         /// @brief Pointer to start of stack, not including guard pages.
-        /// @note  May be top or bottom, depending on which direction stack grows.
+        /// @note  May be top or bottom of stack, depending on which direction stack grows.
         char *start;
 
         /// @brief Size of stack in bytes, not including guard pages.
@@ -77,6 +79,7 @@ namespace linux_ptrace
         (void) std::raise(SIGSTOP);
 
         // catch exception so that we can rethrow from parent
+#if GTEST_HAS_EXCEPTIONS
         try {
             cwa->fn(cwa->args);
             return 0;
@@ -85,6 +88,10 @@ namespace linux_ptrace
             *(cwa->excp) = std::current_exception();
             return 1;
         }
+#else
+        cwa->fn(cwa->args);
+        return 0;
+#endif
     }
 
 
@@ -137,9 +144,8 @@ namespace linux_ptrace
 
 
     /// @brief  Create stack to be used by new process/thread.
-    /// @note   On failure (denoted by result_out param), return type will be zero-initialised.
-    [[nodiscard]] ThreadStack
-    CreateStack(AssertionResult *result_out) noexcept
+    [[nodiscard]] Expected<ThreadStack>
+    CreateStack() noexcept
     {
         // allocate memory for stack
         std::size_t stack_size = GetInitialStackSize();
@@ -152,10 +158,9 @@ namespace linux_ptrace
         // check for failure
         if (!stack_ptr)
         {
-            *result_out = AssertionFailure()
+            return Unexpected{ AssertionFailure()
                 << "Failed to mmap " << stack_size << " bytes for new stack"
-                << " with errno: " << errno;
-            return {};
+                << " with errno: " << errno };
         }
 
         // store in unique_ptr now, so that on failure we can return without
@@ -178,11 +183,10 @@ namespace linux_ptrace
         // check for failure
         if (res == -1)
         {
-            *result_out = AssertionFailure()
+            return Unexpected{ AssertionFailure()
                 << "Failed to change memory protections to READ | WRITE on"
                 << " memory region " << stack_ptr << " with size " << stack_size
-                << " with errno: " << errno;
-            return {};
+                << " with errno: " << errno };
         }
 
         // get start of stack (so high address if stack grows downwards)
@@ -190,8 +194,7 @@ namespace linux_ptrace
         stack_ptr += (flip * stack_size);
 
         // success
-        *result_out = AssertionSuccess();
-        return {std::move(uptr), stack_ptr, stack_size};
+        return ThreadStack{std::move(uptr), stack_ptr, stack_size};
     }
 
 
