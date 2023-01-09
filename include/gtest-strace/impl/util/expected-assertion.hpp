@@ -2,7 +2,7 @@
 #define GTEST_STRACE_IMPL_UTIL_EXPECTED_ASSERTION_HPP
 
 
-#include "expected.hpp"
+#include "../std/expected.hpp"
 
 #include <gtest/gtest-assertion-result.h>
 

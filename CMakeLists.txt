@@ -13,10 +13,10 @@ set(CMAKE_CXX_STANDARD 14)
 find_package(GTest REQUIRED)
 
 add_executable(
-    ${PROJECT_NAME} main.cpp
-    include/gtest-strace/gtest-strace.hpp
+    ${PROJECT_NAME} main.cpp include/gtest-strace/gtest-strace.hpp
+    # impl/std
+    include/gtest-strace/impl/std/expected.hpp
     # impl/util
-    include/gtest-strace/impl/util/expected.hpp
     include/gtest-strace/impl/util/expected-assertion.hpp
     # impl
     include/gtest-strace/impl/linux-ptrace.hpp
