@@ -63,8 +63,13 @@ namespace linux_ptrace
     /// @brief Struct containing args to be passed to cloned function.
     struct WrappedArgs
     {
+        /// @brief Function to be called by clone(...).
         void (*fn) (void *);
+
+        /// @brief Args to be passed to function.
         void *args;
+
+        /// @brief Holds any exceptions thrown by function.
         std::exception_ptr *excp;
     };
 
@@ -240,6 +245,38 @@ namespace linux_ptrace
         return pid;
     }
 
+
+    [[nodiscard]] Expected<void>
+    Strace(void (fn)(void *), void *args)
+#if !GTEST_HAS_EXCEPTIONS
+        noexcept
+#endif
+    {
+        std::exception_ptr excp;
+        WrappedArgs wargs {fn, args, &excp};
+
+        // setup stack
+        auto ets = CreateStack();
+        if (!ets) { return Unexpected{ ets.error() }; }
+        auto ts = std::move(ets.value());
+
+        // start function execution
+        auto epid = RunWithClone(&wargs, &ts);
+        if (!epid) { return Unexpected{ epid.error() }; }
+        auto pid = epid.value();
+
+        // continue execution
+        int status;
+        (void) waitpid(pid, &status, WSTOPPED);
+        (void) kill(pid, SIGCONT);
+        (void) waitpid(pid, &status, 0);
+
+        // re-throw exception if occurred
+#if GTEST_HAS_EXCEPTIONS
+        if (excp) { std::rethrow_exception(excp); }
+#endif
+        return Expected<void>{};
+    }
 
 }  // namespace linux_ptrace
 }  // namespace strace
