@@ -10,8 +10,12 @@
 #include "util/expected-assertion.hpp"
 
 #include <sched.h>
+#include <signal.h>
 #include <sys/mman.h>
+#include <sys/ptrace.h>
 #include <sys/resource.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -246,6 +250,86 @@ namespace linux_ptrace
     }
 
 
+    /// @brief  Setup child process to be traced, and continue its execution,
+    ///         stopping at the next syscall.
+    [[nodiscard]] Expected<void>
+    SetupPtraceSyscall(pid_t pid) noexcept
+    {
+        // wait for stopped child process (was not stopped via ptrace)
+        int status;
+        auto wres = waitpid(pid, &status, WSTOPPED | WUNTRACED);
+
+        // check result
+        if (wres == -1)
+        {
+            return Unexpected{ AssertionFailure()
+                << "Failed to waitpid(pid=" << pid << ", status, options="
+                << "WSTOPPED | WUNTRACED) with errno: " << errno };
+        }
+
+        // check that we stopped because of a signal
+        if (!WIFSTOPPED(status))
+        {
+            return Unexpected{ AssertionFailure()
+                << "Process " << pid << " was stopped for reasons "
+                << "other than the delivery of a signal" };
+        }
+
+        // check that the signal was SIGSTOP
+        if (WSTOPSIG(status) != SIGSTOP)
+        {
+            return Unexpected{ AssertionFailure()
+                << "Process " << pid << " was not stopped by SIGSTOP "
+                << "but by signal: " << WSTOPSIG(status) };
+        }
+
+        // seize process
+        auto pres = ptrace(PTRACE_SEIZE, pid, nullptr, nullptr);
+        if (pres == -1)
+        {
+            return Unexpected{ AssertionFailure()
+                << "Could not PTRACE_SEIZE process " << pid << " with errno: "
+                << errno };
+        }
+
+        // set ptrace options
+        pres = ptrace(PTRACE_SETOPTIONS, pid, nullptr,
+            PTRACE_O_TRACEEXIT | PTRACE_O_TRACESYSGOOD);
+        if (pres == -1)
+        {
+            return Unexpected{ AssertionFailure()
+                << "Failed to set ptrace options PTRACE_O_TRACEEXIT | "
+                << "PTRACE_O_TRACESYSGOOD on tracee pid " << pid << " with "
+                << "errno: " << errno };
+        }
+
+        // continue execution, stopping at next syscall
+        pres = ptrace(PTRACE_SYSCALL, pid, nullptr, 0);
+        if (pres == -1)
+        {
+            return Unexpected{ AssertionFailure()
+                << "Failed to resume ptrace tracee process " << pid << " using "
+                << "request PTRACE_SYSCALL with errno: " << errno };
+        }
+
+        // success
+        return Expected<void> {};
+    }
+
+
+    /// @brief   Process a single ptrace interruption, expecting syscall or exit.
+    /// @returns The syscall value if stopped for a syscall, or -1 if the process terminated.
+    [[nodiscard]] Expected<int>
+    SinglePtrace(pid_t pid) noexcept
+    {
+        (void) ptrace(PTRACE_CONT, pid, nullptr, nullptr);
+        int status;
+        (void) waitpid(pid, &status, 0);
+        (void) kill(pid, SIGCONT);
+        return -1;
+    }
+
+
     [[nodiscard]] Expected<void>
     Strace(void (fn)(void *), void *args)
 #if !GTEST_HAS_EXCEPTIONS
@@ -265,16 +349,24 @@ namespace linux_ptrace
         if (!epid) { return Unexpected{ epid.error() }; }
         auto pid = epid.value();
 
-        // continue execution
-        int status;
-        (void) waitpid(pid, &status, WSTOPPED);
-        (void) kill(pid, SIGCONT);
-        (void) waitpid(pid, &status, 0);
+        // setup ptrace
+        auto evoid = SetupPtraceSyscall(pid);
+        if (!evoid) { return Unexpected{ evoid.error() }; }
+
+        // go through all syscalls until error or termination
+        Expected<int> esys;
+        while ((esys = SinglePtrace(pid)) && esys.value() != -1)
+            ;
+
+        // check for error
+        if (!esys) { return Unexpected{ esys.error() }; }
 
         // re-throw exception if occurred
 #if GTEST_HAS_EXCEPTIONS
         if (excp) { std::rethrow_exception(excp); }
 #endif
+
+        // success
         return Expected<void>{};
     }
 
